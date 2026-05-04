@@ -170,7 +170,7 @@ public class AssemblyCodeDumper implements CodeHook, TraceHook {
                 return;
             }
 
-            String tag = isLoad ? "r" : "w";
+            String tag = isLoad ? "mem[READ]" : "mem[WRITE]";
             if (emulator.is32Bit()) {
                 capstone.api.arm.OpInfo opInfo = (capstone.api.arm.OpInfo) ins.getOperands();
                 capstone.api.arm.Operand memOperand = null;
@@ -193,7 +193,7 @@ public class AssemblyCodeDumper implements CodeHook, TraceHook {
                 }
                 long absAddr = baseValue + shiftedIndex + mem.getDisp();
                 int size = getArm32AccessSize(mnemonic, opInfo);
-                builder.append(String.format(" (%s 0x%x %d)", tag, absAddr, size));
+                builder.append(String.format(" %s abs=0x%x ", tag, absAddr));
             } else {
                 capstone.api.arm64.OpInfo opInfo = (capstone.api.arm64.OpInfo) ins.getOperands();
                 capstone.api.arm64.Operand memOperand = null;
@@ -216,9 +216,10 @@ public class AssemblyCodeDumper implements CodeHook, TraceHook {
                 }
                 long absAddr = baseValue + shiftedIndex + mem.getDisp();
                 int elemSize = getArm64ElemSize(ins, mnemonic, opInfo);
-                builder.append(String.format(" (%s 0x%x %d)", tag, absAddr, elemSize));
+                builder.append(String.format(" %s abs=0x%x ", tag, absAddr));
                 if (mnemonic.startsWith("ldp") || mnemonic.startsWith("stp")) {
-                    builder.append(String.format(" (%s 0x%x %d)", tag, absAddr + elemSize, elemSize));
+//                    builder.append(String.format(" (%s 0x%x %d)", tag, absAddr + elemSize, elemSize));
+                    builder.append(String.format(" %s abs=0x%x ", tag, absAddr + elemSize));
                 }
             }
         } catch (Exception e) {
