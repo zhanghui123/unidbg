@@ -1,6 +1,9 @@
 package com.anjuke.mobile.sign;
 
 import com.github.unidbg.AndroidEmulator;
+import com.github.unidbg.Module;
+import com.github.unidbg.TraceHook;
+import com.github.unidbg.debugger.Debugger;
 import com.github.unidbg.linux.android.AndroidEmulatorBuilder;
 import com.github.unidbg.linux.android.AndroidResolver;
 import com.github.unidbg.linux.android.dvm.DalvikModule;
@@ -12,7 +15,9 @@ import com.github.unidbg.linux.android.dvm.jni.ProxyDvmObject;
 import com.github.unidbg.memory.Memory;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,8 +28,8 @@ public class SignUtil {
 
     private final DvmClass cSignUtil;
     private final VM vm;
-
-    public SignUtil() {
+    private final Module module;
+    public SignUtil() throws FileNotFoundException {
         emulator = AndroidEmulatorBuilder.for32Bit()
                 .setProcessName("com.anjuke.android.app")
                 .build();
@@ -34,7 +39,12 @@ public class SignUtil {
         vm.setDvmClassFactory(new ProxyClassFactory());
         vm.setVerbose(false);
         DalvikModule dm = vm.loadLibrary(new File("unidbg-android/src/test/resources/example_binaries/armeabi-v7a/libsignutil.so"), false);
+        module = dm.getModule();
         cSignUtil = vm.resolveClass("com/anjuke/mobile/sign/SignUtil");
+        TraceHook traceHook = emulator.traceCode(module.base, module.base+module.size);
+        File traceFile = new File("unidbg-android/src/test/java/com/anjuke/mobile/sign/trace.log");
+        PrintStream printStream = new PrintStream(traceFile);
+        traceHook.setRedirect(printStream);
         dm.callJNI_OnLoad(emulator);
     }
 
