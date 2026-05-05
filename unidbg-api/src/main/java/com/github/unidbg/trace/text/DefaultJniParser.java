@@ -180,7 +180,7 @@ public class DefaultJniParser implements TraceCallParser {
     @Override
     public String formatCall(AssemblyCodeTextDumper.PendingCall call, Backend backend, boolean is64Bit, Emulator<?> emulator, AssemblyCodeTextDumper dumper) {
         String[] args = jniArgs.get(call.funcName);
-        StringBuilder sb = new StringBuilder("[JNI] JNIEnv->").append(call.funcName).append("(");
+        StringBuilder sb = new StringBuilder("JNIEnv ").append(call.funcName).append("(");
         if (args != null) {
             for (int i = 0; i < args.length; i++) {
                 if (i > 0) sb.append(", ");
@@ -251,6 +251,55 @@ public class DefaultJniParser implements TraceCallParser {
 
     @Override
     public void printPostReturnMemoryDump(PrintStream out, AssemblyCodeTextDumper.PendingCall call, long retVal, Backend backend, boolean is64Bit, Emulator<?> emulator, AssemblyCodeTextDumper dumper) {
-        // usually JNI doesn't dump raw buffers in C-string way
+        String funcName = call.funcName;
+        if (funcName == null) return;
+        long srcAddr = 0;
+        long length = 0;
+        if (funcName.equals("SetByteArrayRegion") || funcName.equals("SetShortArrayRegion") || funcName.equals("SetIntArrayRegion") || funcName.equals("SetLongArrayRegion") || funcName.equals("SetFloatArrayRegion") || funcName.equals("SetDoubleArrayRegion") || funcName.equals("SetBooleanArrayRegion") || funcName.equals("SetCharArrayRegion")) {
+            srcAddr = call.args[4];
+            length = call.args[3];
+        } else if (funcName.equals("GetByteArrayRegion") || funcName.equals("GetIntArrayRegion") || funcName.equals("GetShortArrayRegion") || funcName.equals("GetLongArrayRegion")) {
+            srcAddr = call.args[4];
+            length = call.args[3];
+        } else if (funcName.equals("GetByteArrayElements") || funcName.equals("GetIntArrayElements") || funcName.equals("GetShortArrayElements") || funcName.equals("GetLongArrayElements")) {
+            if (retVal != 0) {
+                srcAddr = retVal;
+                long arrLen = call.args[1];
+                if (arrLen != 0) length = arrLen;
+            }
+        } else if (funcName.equals("NewStringUTF")) {
+            if (retVal != 0) {
+                String s = dumper.readStringSafe(backend, retVal);
+                if (s != null) {
+                    out.println("  -> \"" + dumper.escapeString(s) + "\"");
+                }
+            }
+            return;
+        }
+        if (srcAddr != 0 && length > 0 && length <= 4096) {
+            int readLen = (int) length;
+            byte[] data = backend.mem_read(srcAddr, readLen);
+            out.println("hexdump at address 0x" + Long.toHexString(srcAddr) + " with length 0x" + Long.toHexString(length) + ":");
+            StringBuilder hex = new StringBuilder();
+            StringBuilder ascii = new StringBuilder();
+            for (int offset = 0; offset < data.length; offset++) {
+                if (offset % 16 == 0) {
+                    if (offset > 0) {
+                        out.println(hex.toString() + " |" + ascii.toString() + "|");
+                    }
+                    hex.setLength(0);
+                    ascii.setLength(0);
+                    hex.append(String.format("%016x:", srcAddr + offset));
+                }
+                if (hex.length() > 0 && offset % 2 == 0 && offset % 16 != 0) hex.append(' ');
+                hex.append(String.format("%02x", data[offset] & 0xFF));
+                ascii.append((data[offset] >= 32 && data[offset] <= 126) ? (char) data[offset] : '.');
+            }
+            if (hex.length() > 0) {
+                int padding = 50 - hex.length();
+                for (int i = 0; i < padding; i++) hex.append(' ');
+                out.println(hex.toString() + " |" + ascii.toString() + "|");
+            }
+        }
     }
 }

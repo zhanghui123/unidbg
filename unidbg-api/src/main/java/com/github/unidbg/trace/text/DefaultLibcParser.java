@@ -139,7 +139,7 @@ public class DefaultLibcParser implements TraceCallParser {
             return null; // fallback to general parser since we aren't sure it's actually libc if module name is lost
         }
         
-        StringBuilder sb = new StringBuilder(call.moduleName != null ? call.moduleName + "::" : "").append(funcName).append("(");
+        StringBuilder sb = new StringBuilder(call.moduleName != null ? call.moduleName + " " : "").append(funcName).append("(");
         
         if (argsTypes != null) {
             String formatStr = null;
@@ -224,7 +224,7 @@ public class DefaultLibcParser implements TraceCallParser {
             if (destStr != 0) {
                 String s = dumper.readStringSafe(backend, destStr);
                 if (s != null) {
-                    out.println("    [Mem Updated] 0x" + Long.toHexString(destStr) + " -> \"" + s + "\"");
+                    out.println("    mem_upd 0x" + Long.toHexString(destStr) + " -> \"" + s + "\"");
                 }
             }
             

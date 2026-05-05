@@ -22,13 +22,13 @@ public class DefaultLibcppParser implements TraceCallParser {
         long arg0 = dumper.getArgRegValue(backend, 0, is64Bit);
         
         if (funcName.startsWith("_Znwj") || funcName.startsWith("_Znwm")) { 
-            return "libc++::operator new(" + arg0 + ")";
+            return "libc++ operator new(" + arg0 + ")";
         } else if (funcName.startsWith("_Znaj") || funcName.startsWith("_Znam")) { 
-            return "libc++::operator new[](" + arg0 + ")";
+            return "libc++ operator new[](" + arg0 + ")";
         } else if (funcName.startsWith("_ZdlPv")) { 
-            return "libc++::operator delete(0x" + Long.toHexString(arg0) + ")";
+            return "libc++ operator delete(0x" + Long.toHexString(arg0) + ")";
         } else if (funcName.startsWith("_ZdaPv")) { 
-            return "libc++::operator delete[](0x" + Long.toHexString(arg0) + ")";
+            return "libc++ operator delete[](0x" + Long.toHexString(arg0) + ")";
         }
         
         return null;
