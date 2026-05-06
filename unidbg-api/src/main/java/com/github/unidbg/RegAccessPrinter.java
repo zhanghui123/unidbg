@@ -12,6 +12,16 @@ import java.util.HashMap;
 
 public final class RegAccessPrinter {
 
+    private static String aliasRegName(String regName, int regId) {
+        if (regName == null) return "unk";
+        if (regId == Arm64Const.UC_ARM64_REG_X29 || "x29".equals(regName)) return "fp";
+        if (regId == Arm64Const.UC_ARM64_REG_X30 || "x30".equals(regName) || "lr".equals(regName)) return "lr";
+        if (regId == Arm64Const.UC_ARM64_REG_SP || "sp".equals(regName)) return "sp";
+        if (regId == ArmConst.UC_ARM_REG_LR || "lr".equals(regName)) return "lr";
+        if (regId == ArmConst.UC_ARM_REG_FP || "fp".equals(regName) || "r11".equals(regName)) return "fp";
+        return regName;
+    }
+
     private final long address;
     private final short[] accessRegs;
     private boolean forWriteRegs;
@@ -58,8 +68,7 @@ public final class RegAccessPrinter {
         for (short reg : accessRegs) {
             Integer regIdBoxed = unicornRegIds.get(reg);
             int regId = regIdBoxed != null ? regIdBoxed : 0;
-            String regName = regNames.get(reg);
-            if (regName == null) regName = "unk";
+            String regName = aliasRegName(regNames.get(reg), regId);
             
             if (forWriteRegs && oldValues.containsKey(regId)) {
                 try {
@@ -74,7 +83,7 @@ public final class RegAccessPrinter {
                         regId == ArmConst.UC_ARM_REG_LR || regId == ArmConst.UC_ARM_REG_SP ||
                         regId == ArmConst.UC_ARM_REG_CPSR) {
                     if (forWriteRegs) {
-                        builder.append(" =>");
+                        builder.append(" ->");
                         forWriteRegs = false;
                     }
                     if (regId == ArmConst.UC_ARM_REG_CPSR) {
@@ -90,7 +99,7 @@ public final class RegAccessPrinter {
                     }
                 } else if (regId >= ArmConst.UC_ARM_REG_D0 && regId <= ArmConst.UC_ARM_REG_D31) {
                     if (forWriteRegs) {
-                        builder.append(" =>");
+                        builder.append(" ->");
                         forWriteRegs = false;
                     }
                     try {
@@ -99,17 +108,17 @@ public final class RegAccessPrinter {
                     } catch (Exception ignored) {}
                 } else if (regId >= ArmConst.UC_ARM_REG_S0 && regId <= ArmConst.UC_ARM_REG_S31) {
                     if (forWriteRegs) {
-                        builder.append("\n      => ");
+                        builder.append(" -> ");
                         forWriteRegs = false;
                     }
                     int value = backend.reg_read(regId).intValue();
-                    builder.append("\n        ").append(regName).append("=0x").append(Long.toHexString(value & 0xffffffffL));
+                    builder.append(' ').append(regName).append("=0x").append(Long.toHexString(value & 0xffffffffL));
                 }
             } else {
                 if ((regId >= Arm64Const.UC_ARM64_REG_X0 && regId <= Arm64Const.UC_ARM64_REG_X28) ||
                         (regId >= Arm64Const.UC_ARM64_REG_X29 && regId <= Arm64Const.UC_ARM64_REG_SP)) {
                     if (forWriteRegs) {
-                        builder.append(" =>");
+                        builder.append(" ->");
                         forWriteRegs = false;
                     }
                     if (regId == Arm64Const.UC_ARM64_REG_NZCV) {
@@ -133,14 +142,14 @@ public final class RegAccessPrinter {
                     }
                 } else if (regId >= Arm64Const.UC_ARM64_REG_W0 && regId <= Arm64Const.UC_ARM64_REG_W30) {
                     if (forWriteRegs) {
-                        builder.append(" =>");
+                        builder.append(" ->");
                         forWriteRegs = false;
                     }
                     int value = backend.reg_read(regId).intValue();
                     builder.append(' ').append(regName).append("=0x").append(Long.toHexString(value & 0xffffffffL));
                 } else if (regId >= Arm64Const.UC_ARM64_REG_Q0 && regId <= Arm64Const.UC_ARM64_REG_Q31 || regId >= Arm64Const.UC_ARM64_REG_V0 && regId <= Arm64Const.UC_ARM64_REG_V31) {
                     if (forWriteRegs) {
-                        builder.append(" =>");
+                        builder.append(" ->");
                         forWriteRegs = false;
                     }
                     try {
@@ -149,7 +158,7 @@ public final class RegAccessPrinter {
                     } catch (Exception ignored) {}
                 } else if (regId >= Arm64Const.UC_ARM64_REG_D0 && regId <= Arm64Const.UC_ARM64_REG_D31) {
                     if (forWriteRegs) {
-                        builder.append(" =>");
+                        builder.append(" ->");
                         forWriteRegs = false;
                     }
                     try {
@@ -158,7 +167,7 @@ public final class RegAccessPrinter {
                     } catch (Exception ignored) {}
                 } else if (regId >= Arm64Const.UC_ARM64_REG_S0 && regId <= Arm64Const.UC_ARM64_REG_S31) {
                     if (forWriteRegs) {
-                        builder.append(" =>");
+                        builder.append(" ->");
                         forWriteRegs = false;
                     }
                     try {

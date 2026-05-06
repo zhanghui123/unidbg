@@ -46,6 +46,8 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
     private Long lastAddress = null;
     private Long currentInstructionAddress = null;
     private final List<String> pendingMemoryDumps = new ArrayList<>();
+    private String pendingCallLine = null;
+    private int pltSkipCount = 0;
     private static final Logger log = LoggerFactory.getLogger(AssemblyCodeTextDumper.class);
     private static final int SYMBOL_MAX_OFFSET = Unwinder.SYMBOL_SIZE;
     
@@ -126,14 +128,15 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
             StringBuilder pb = new StringBuilder();
             Module module = emulator.getMemory().findModuleByAddress(address);
             if (module != null) {
-                pb.append('[').append(module.name).append(" 0x")
-                  .append(Long.toHexString(module.base)).append("+0x")
-                  .append(Long.toHexString(address - module.base)).append("] ");
+                pb.append('[').append(module.name).append("] ");
             } else {
-                pb.append("[0x").append(Long.toHexString(address)).append("] ");
+                pb.append("[unknown] ");
             }
-            pb.append("0x").append(Long.toHexString(address)).append(": \"")
-              .append(this.mnemonic).append(' ').append(this.opStr).append('"');
+            pb.append("0x").append(Long.toHexString(address));
+            if (module != null) {
+                pb.append("!0x").append(Long.toHexString(address - module.base));
+            }
+            pb.append(' ').append(this.mnemonic).append(' ').append(this.opStr);
             this.precomputedPrefix = pb.toString();
 
             RegsAccess regsAccess = ins.regsAccess();
@@ -360,23 +363,29 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
             if (lastInstructionWritePrinter != null) {
                 lastInstructionWritePrinter.print(emulator, emulator.getBackend(), bufferedInstruction, lastAddress);
             }
-            this.asyncBlockBuffer.append(bufferedInstruction).append('\n');
-            this.linesInBlock++;
-            
-            if (this.manualMemDumpAddress != 0) {
-                try {
-                    byte[] data = emulator.getBackend().mem_read(this.manualMemDumpAddress, this.manualMemDumpSize);
-                    this.asyncBlockBuffer.append(formatMemDump(this.manualMemDumpType, this.manualMemDumpAddress, data)).append('\n');
-                    this.linesInBlock++;
-                } catch (Exception ignored) {}
-                this.manualMemDumpAddress = 0;
-                this.pendingMemoryDumps.clear(); // Suppress scattered Unicorn hook dumps
+
+            if (!this.pendingMemoryDumps.isEmpty()) {
+                bufferedInstruction.append(' ');
+                for (int i = 0; i < pendingMemoryDumps.size(); i++) {
+                    if (i > 0) bufferedInstruction.append(' ');
+                    bufferedInstruction.append(pendingMemoryDumps.get(i));
+                }
             }
 
-            for (String dump : pendingMemoryDumps) {
-                this.asyncBlockBuffer.append(dump).append('\n');
+            this.asyncBlockBuffer.append(bufferedInstruction).append('\n');
+            this.linesInBlock++;
+
+            if (this.pendingCallLine != null) {
+                this.asyncBlockBuffer.append(this.pendingCallLine).append('\n');
                 this.linesInBlock++;
+                this.pendingCallLine = null;
             }
+            
+            if (this.manualMemDumpAddress != 0) {
+                this.manualMemDumpAddress = 0;
+                this.pendingMemoryDumps.clear();
+            }
+
             bufferedInstruction = null;
             pendingMemoryDumps.clear();
             lastInstructionWritePrinter = null;
@@ -431,25 +440,29 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
                         Long lAddr = this.lastAddress;
                         lastPrinter.print(emulator, backend, instructionBuffer, lAddr != null ? lAddr : 0);
                     }
+
+                    if (!this.pendingMemoryDumps.isEmpty()) {
+                        instructionBuffer.append(' ');
+                        for (int i = 0; i < pendingMemoryDumps.size(); i++) {
+                            if (i > 0) instructionBuffer.append(' ');
+                            instructionBuffer.append(pendingMemoryDumps.get(i));
+                        }
+                    }
+
                     this.asyncBlockBuffer.append(instructionBuffer).append('\n');
                     this.linesInBlock++;
 
-                    if (this.manualMemDumpAddress != 0) {
-                        if (!disableHexdump) {
-                            try {
-                                byte[] data = backend.mem_read(this.manualMemDumpAddress, this.manualMemDumpSize);
-                                this.asyncBlockBuffer.append(formatMemDump(this.manualMemDumpType, this.manualMemDumpAddress, data)).append('\n');
-                                this.linesInBlock++;
-                            } catch (Exception ignored) {}
-                        }
-                        this.manualMemDumpAddress = 0;
-                        this.pendingMemoryDumps.clear(); // Suppress scattered Unicorn hook dumps
+                    if (this.pendingCallLine != null) {
+                        this.asyncBlockBuffer.append(this.pendingCallLine).append('\n');
+                        this.linesInBlock++;
+                        this.pendingCallLine = null;
                     }
 
-                    for (String dump : this.pendingMemoryDumps) {
-                        this.asyncBlockBuffer.append(dump).append('\n');
-                        this.linesInBlock++;
+                    if (this.manualMemDumpAddress != 0) {
+                        this.manualMemDumpAddress = 0;
+                        this.pendingMemoryDumps.clear();
                     }
+
                     this.pendingMemoryDumps.clear();
 
                     checkFlushAsyncBlockBuffer();
@@ -472,6 +485,15 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
                     this.pendingMemoryDumps.clear();
                     this.bufferedInstruction = null;
                     return; // Skip tracing framework SVC memory bounds
+                }
+                
+                // PLT stub skip: skip fixed number of instructions after external call
+                if (this.pltSkipCount > 0) {
+                    this.pltSkipCount--;
+                    this.pendingMemoryDumps.clear();
+                    this.bufferedInstruction = null;
+                    this.lastInstructionWritePrinter = null;
+                    return;
                 }
                 
                 // 3. Begin new instruction buffer
@@ -590,8 +612,7 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
                 formattedRet = "0x" + Long.toHexString(retVal);
             }
             
-            String callerInfo = call.funcAlias != null ? call.funcAlias : ((call.moduleName != null ? call.moduleName + "::" : "") + call.funcName);
-            out.println("=============== <- " + callerInfo + " ret: " + formattedRet + " =================");
+            out.println("ret " + formattedRet);
             
             if (usedParser != null) {
                 usedParser.printPostReturnMemoryDump(out, call, retVal, backend, is64Bit, emulator, this);
@@ -646,13 +667,21 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
                     }
                 }
                 if (callString == null) {
-                    callString = (symbol.moduleName != null ? symbol.moduleName + "::" : "") + symbol.funcName + "(X0=0x" + Long.toHexString(args[0]) + ", X1=0x" + Long.toHexString(args[1]) + ")";
+                    callString = (symbol.moduleName != null ? symbol.moduleName + " " : "") + symbol.funcName + "(X0=0x" + Long.toHexString(args[0]) + ", X1=0x" + Long.toHexString(args[1]) + ")";
                 }
                 
                 call.funcAlias = callString;
 
-                PrintStream out = queueOut;
-                out.println("=============== -> call: " + callString + " =================");
+                this.pendingCallLine = (call.isJni ? "call JNI " : "call ") + callString;
+                if (symbol != null && symbol.moduleName != null && traceModuleNames != null) {
+                    boolean isExternalCall = true;
+                    for (String mn : traceModuleNames) {
+                        if (mn != null && mn.equals(symbol.moduleName)) { isExternalCall = false; break; }
+                    }
+                    if (isExternalCall) {
+                        this.pltSkipCount = is64Bit ? 4 : 2;
+                    }
+                }
                 pendingCalls.push(call);
             }
         } else if (lowerMnem.equals("svc") && ins.getOpStr().contains("#0")) {
@@ -683,8 +712,7 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
             
             call.funcAlias = callString;
             
-            PrintStream out = queueOut;
-            out.println("=============== -> call: " + callString + " =================");
+            this.pendingCallLine = "call " + callString;
             pendingCalls.push(call);
         }
     }
@@ -742,7 +770,7 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
             else if (c == 0) return val + " ('\\0')";
             return String.valueOf(val);
         } else if ("int".equals(type) || "size".equals(type)) {
-            return String.valueOf(val);
+            return "0x" + Long.toHexString(val);
         }
         return "0x" + Long.toHexString(val);
     }
@@ -774,13 +802,7 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
             if (currentAddr != null && Math.abs(pc - currentAddr) > 8) {
                 return;
             }
-            try {
-                byte[] data = backend.mem_read(address, size);
-                pendingMemoryDumps.add(formatMemDump("r", address, data));
-            } catch (BackendException e) {
-                String prefix = String.format("(r %d)", size);
-                pendingMemoryDumps.add(String.format("%-7s 0x%x  [read error]", prefix, address));
-            }
+            pendingMemoryDumps.add("mem_r=0x" + Long.toHexString(address));
         }
     }
 
@@ -792,19 +814,7 @@ public class AssemblyCodeTextDumper implements CodeHook, TraceHook {
             if (currentAddr != null && Math.abs(pc - currentAddr) > 8) {
                 return;
             }
-            byte[] data;
-            if (size == 1) {
-                data = new byte[] { (byte) value };
-            } else if (size == 2) {
-                data = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN).putShort((short) value).array();
-            } else if (size == 4) {
-                data = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt((int) value).array();
-            } else if (size == 8) {
-                data = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
-            } else {
-                data = new byte[size];
-            }
-            pendingMemoryDumps.add(formatMemDump("w", address, data));
+            pendingMemoryDumps.add("mem_w=0x" + Long.toHexString(address));
         }
     }
 
